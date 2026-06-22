@@ -73,44 +73,60 @@ export const createSolicitud = async (req, res) => {
       });
     }
 
+    // ── Auto-asignación: curso exacto + overlap de horario + desempate por carga ──
     let tutorId = null;
 
-    const [candidatos] = await pool.query(
-      `SELECT DISTINCT tutor_id FROM tutor_cursos WHERE curso = ?`,
-      [ramo]
-    );
-
-    if (candidatos.length > 0 && dias_preferidos && hora_inicio_preferida) {
+    if (dias_preferidos && hora_inicio_preferida && hora_fin_preferida) {
       const diasPref  = JSON.parse(dias_preferidos);
       const inicioMin = timeToMinutes(hora_inicio_preferida);
-      const finMin    = timeToMinutes(hora_fin_preferida ?? '23:59');
+      const finMin    = timeToMinutes(hora_fin_preferida);
+
+      // Candidatos: tutores con el curso exacto en tutor_cursos
+      const [candidatos] = await pool.query(
+        `SELECT DISTINCT tutor_id FROM tutor_cursos WHERE curso = ?`,
+        [ramo]
+      );
+
+      const tutoresCompatibles = [];
 
       for (const c of candidatos) {
         const [horarios] = await pool.query(
           `SELECT cursos, dias, hora_inicio, hora_fin
-           FROM tutor_horarios_curso WHERE tutor_id = ?`,
+          FROM tutor_horarios_curso WHERE tutor_id = ?`,
           [c.tutor_id]
         );
 
-        for (const h of horarios) {
-          const dias           = JSON.parse(h.dias  ?? '[]');
-          const cursos         = JSON.parse(h.cursos ?? '[]');
-          const coincideDia    = dias.some((d) => diasPref.includes(d));
-          const coincideCurso  = cursos.includes(ramo);
-          const overlapInicio  = Math.max(inicioMin, timeToMinutes(h.hora_inicio));
-          const overlapFin     = Math.min(finMin,    timeToMinutes(h.hora_fin));
+        const esCompatible = horarios.some((h) => {
+          const dias   = JSON.parse(h.dias   ?? '[]');
+          const cursos = JSON.parse(h.cursos ?? '[]');
+          const coincideCurso = cursos.includes(ramo);
+          const coincideDia   = dias.some((d) => diasPref.includes(d));
+          const overlapInicio = Math.max(inicioMin, timeToMinutes(h.hora_inicio));
+          const overlapFin    = Math.min(finMin,    timeToMinutes(h.hora_fin));
+          return coincideCurso && coincideDia && (overlapFin - overlapInicio) >= 60;
+        });
 
-          if (coincideDia && coincideCurso && (overlapFin - overlapInicio) >= 60) {
-            tutorId = c.tutor_id;
-            break;
+        if (esCompatible) tutoresCompatibles.push(c.tutor_id);
+      }
+
+      // Desempate: el tutor con menos solicitudes activas (Tutor asignado / Programada)
+      if (tutoresCompatibles.length > 0) {
+        let mejorTutor = null;
+        let menorCarga = Infinity;
+
+        for (const tid of tutoresCompatibles) {
+          const [[{ carga }]] = await pool.query(
+            `SELECT COUNT(*) AS carga FROM solicitudes
+            WHERE tutor_id = ? AND estado IN ('Tutor asignado', 'Programada')`,
+            [tid]
+          );
+          if (carga < menorCarga) {
+            menorCarga = carga;
+            mejorTutor = tid;
           }
         }
-        if (tutorId) break;
+        tutorId = mejorTutor;
       }
-    }
-
-    if (!tutorId && candidatos.length > 0) {
-      tutorId = candidatos[0].tutor_id;
     }
 
     const estado = tutorId ? 'Tutor asignado' : 'Buscando tutor';
