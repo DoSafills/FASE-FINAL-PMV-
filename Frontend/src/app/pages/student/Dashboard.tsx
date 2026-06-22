@@ -7,12 +7,19 @@ import { RequestStatus } from '../../context/types';
 
 export function StudentDashboard() {
   const { user } = useAuth();
-  const { requests, getTutors } = useTutoring();
+  const { requests, getTutors, groups } = useTutoring();
   const navigate = useNavigate();
   const [showStatusInfo, setShowStatusInfo] = useState(false);
 
-  const myRequests = requests.filter(r => r.studentId === user?.id);
+  const myRequests = requests.filter(r => r.studentId === String(user?.id));
   const tutors = getTutors();
+
+  const groupForRequest = (req: { studentId: string; subject: string }) =>
+    groups.find(
+      group =>
+        group.studentIds.includes(req.studentId) &&
+        group.course === req.subject
+    );
 
   const getStatusBadge = (status: RequestStatus) => {
     switch (status) {
@@ -94,6 +101,7 @@ export function StudentDashboard() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {myRequests.map(req => {
             const tutorDetails = req.tutorId ? tutors.find(t => t.id === req.tutorId) : null;
+            const assignedGroup = groupForRequest(req);
             
             return (
             <div key={req.id} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col">
@@ -104,7 +112,7 @@ export function StudentDashboard() {
               <h3 className="text-lg font-bold text-gray-900 mb-1">{req.subject}</h3>
               <p className="text-xs text-gray-500 mb-2">{req.career} - Semestre {req.semester}</p>
               <p className="text-sm text-gray-600 line-clamp-3 mb-2 flex-grow">{req.description}</p>
-              <p className="text-xs font-medium text-indigo-600 mb-4 bg-indigo-50 px-2 py-1 rounded inline-block self-start"> Horario pref: {req.preferredDays?.join(', ')} {req.preferredStartTime} - {req.preferredEndTime}</p>
+              <p className="text-xs font-medium text-indigo-600 mb-4 bg-indigo-50 px-2 py-1 rounded inline-block self-start">Horario pref: {req.preferredDays.join(', ')} {req.preferredStartTime} - {req.preferredEndTime}</p>
               
               <div className="pt-4 border-t border-gray-100 text-sm">
                 {req.tutorName ? (
@@ -126,6 +134,17 @@ export function StudentDashboard() {
                         <span>{tutorDetails.phone}</span>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {req.status === 'ACCEPTED' && assignedGroup && (
+                  <div className="mt-3 p-3 bg-blue-50 rounded-lg space-y-2">
+                    <p className="text-xs font-semibold text-blue-700 uppercase tracking-wider">Datos de tutoría</p>
+                    <p className="text-sm text-gray-700"><span className="font-medium">Grupo:</span> {assignedGroup.name}</p>
+                    <p className="text-sm text-gray-700"><span className="font-medium">Curso:</span> {assignedGroup.course}</p>
+                    <p className="text-sm text-gray-700"><span className="font-medium">Día:</span> {assignedGroup.day}</p>
+                    <p className="text-sm text-gray-700"><span className="font-medium">Hora:</span> {assignedGroup.startTime} - {assignedGroup.endTime}</p>
+                    <p className="text-sm text-gray-700"><span className="font-medium">Sala:</span> {assignedGroup.room}</p>
                   </div>
                 )}
 

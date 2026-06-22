@@ -36,6 +36,30 @@ availability?: {
   semester?: number;
 }
 
+export interface TutoringGroup {
+
+  id: string;
+
+  tutorId: string;
+
+  name: string;
+
+  course: string;
+
+  day: string;
+
+  startTime: string;
+
+  endTime: string;
+
+  room: string;
+
+  maxStudents: number;
+
+  studentIds: string[];
+
+}
+
 export type RequestStatus = 'PENDING' | 'ASSIGNED' | 'ACCEPTED' | 'REJECTED' | 'FAILED_AUTO_ASSIGN' | 'FINISHED' | 'CANCELED' | 'CONTINUITY';
 
 export interface TutoringRequest {

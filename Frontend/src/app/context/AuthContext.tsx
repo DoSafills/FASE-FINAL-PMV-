@@ -1,82 +1,96 @@
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { User } from './types';
+
+const API = 'http://localhost:3001/api';
+
+interface User {
+  id: number;
+  nombre: string;
+  email: string;
+  rol: 'ESTUDIANTE' | 'TUTOR' | 'ENCARGADO';
+  semestre?: number | null;
+  tutorId?: number | null;
+}
+
+interface RegisterData {
+  nombre: string;
+  email: string;
+  password: string;
+  rol: 'ESTUDIANTE' | 'TUTOR' | 'ENCARGADO';
+  semestre?: number;
+}
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string) => Promise<boolean>;
+  token: string | null;
+  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
+  register: (data: RegisterData) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const ENCARGADO: User = { id: 'a1', name: 'Admin Principal', email: 'admin@uni.edu', role: 'ENCARGADO' };
-
-const ESTUDIANTES: User[] = [
-  { id: 'u1', name: 'Ana Estudiante',    email: 'ana@uni.edu',    role: 'ESTUDIANTE', semester: 1 },
-  { id: 'u2', name: 'Carlos Estudiante', email: 'carlos@uni.edu', role: 'ESTUDIANTE', semester: 4 },
-];
-const TUTOR_PRUEBA: User = {
-  id:           '1',        // debe coincidir con el id real en tu BD
-  name:         'Tutor Prueba',
-  email:        'tutor@prueba.cl',
-  role:         'TUTOR',
-  specialties:  [],
-  courses:      [],
-  availability: [],
-};
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('tutoring_user');
+  const [user, setUser]   = useState<User | null>(() => {
+    const saved = localStorage.getItem('auth_user');
     return saved ? JSON.parse(saved) : null;
   });
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'));
 
   useEffect(() => {
-    if (user) localStorage.setItem('tutoring_user', JSON.stringify(user));
-    else localStorage.removeItem('tutoring_user');
-  }, [user]);
-
-  const login = async (email: string): Promise<boolean> => {
-    // Encargado
-    if (email === ENCARGADO.email) { setUser(ENCARGADO); return true; }
-    if (email === TUTOR_PRUEBA.email)   { setUser(TUTOR_PRUEBA);   return true; }
-    // Estudiantes de prueba
-    const est = ESTUDIANTES.find(u => u.email === email);
-    if (est) { setUser(est); return true; }
-
-    // Tutores → buscar en la BD
-    try {
-      const res  = await fetch('http://localhost:3001/api/tutores');
-      const data = await res.json();
-      const tutor = data.find((t: any) => t.email === email);
-      if (tutor) {
-        const u: User = {
-          id:           String(tutor.id),
-          name:         tutor.nombre,
-          email:        tutor.email,
-          role:         'TUTOR',
-          specialties:  tutor.especializaciones?.map((e: any) => e.nombre) ?? [],
-          courses:      tutor.cursos?.map((c: any) => c.curso) ?? [],
-          availability: tutor.horarios?.map((h: any) => ({
-            days:      [h.dia],
-            startTime: h.hora_inicio,
-            endTime:   h.hora_fin,
-          })) ?? [],
-        };
-        setUser(u);
-        return true;
-      }
-    } catch (err) {
-      console.error('Error conectando con la BD:', err);
+    if (user && token) {
+      localStorage.setItem('auth_user', JSON.stringify(user));
+      localStorage.setItem('auth_token', token);
+    } else {
+      localStorage.removeItem('auth_user');
+      localStorage.removeItem('auth_token');
     }
+  }, [user, token]);
 
-    return false;
+  const login = async (email: string, password: string) => {
+    try {
+      const res  = await fetch(`${API}/auth/login`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) return { ok: false, error: data.error ?? 'Error al iniciar sesión' };
+
+      setUser(data.user);
+      setToken(data.token);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: 'No se pudo conectar con el servidor' };
+    }
   };
 
-  const logout = () => setUser(null);
+  const register = async (regData: RegisterData) => {
+    try {
+      const res  = await fetch(`${API}/auth/register`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(regData),
+      });
+      const data = await res.json();
+
+      if (!res.ok) return { ok: false, error: data.error ?? 'Error al registrarse' };
+
+      setUser(data.user);
+      setToken(data.token);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: 'No se pudo conectar con el servidor' };
+    }
+  };
+
+  const logout = () => {
+    setUser(null);
+    setToken(null);
+  };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, token, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

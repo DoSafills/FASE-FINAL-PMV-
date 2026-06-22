@@ -1,11 +1,12 @@
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { TutoringRequest, User, CourseAvailability } from './types';
+import { TutoringRequest, User, CourseAvailability, TutoringGroup } from './types';
 
 const API = 'http://localhost:3001/api';
 
 interface TutoringContextType {
   users: User[];
   requests: TutoringRequest[];
+  groups: TutoringGroup[];
   createRequest: (req: Omit<TutoringRequest, 'id' | 'status' | 'createdAt' | 'priority'>) => Promise<void>;
   assignTutor: (requestId: string, tutorId: string) => Promise<void>;
   acceptRequest: (requestId: string) => Promise<void>;
@@ -13,29 +14,31 @@ interface TutoringContextType {
   cancelRequest: (requestId: string, reason: string) => Promise<void>;
   finishRequest: (requestId: string, continuityReason?: string) => Promise<void>;
   registerAttendance: (requestId: string, attended: boolean) => Promise<void>;
-  getTutors: () => User[];
+  getTutors: () => (User & { groups?: TutoringGroup[] })[];
   addTutor: (tutor: Omit<User, 'id' | 'role' | 'joinedAt'>) => Promise<void>;
   updateTutor: (tutorId: string, specialties: string[], courses: string[], availability: { days: string[]; startTime: string; endTime: string }[]) => Promise<void>;
   updateCourseAvailability: (tutorId: string, schedules: CourseAvailability[]) => Promise<void>;
   adminUpdateStatus: (requestId: string, status: TutoringRequest['status']) => Promise<void>;
+  createGroup: (group: Omit<TutoringGroup, 'id'>) => Promise<void>;
+  deleteGroup: (groupId: string) => Promise<void>;
+  addStudentToGroup: (groupId: string, studentIds: string[]) => Promise<void>;
+  removeStudentFromGroup: (groupId: string, studentId: string) => Promise<void>;
 }
 
-// Mapeo de estados frontend ↔ backend
 const toBackend: Record<string, string> = {
-  PENDING:           'Pendiente',
-  FAILED_AUTO_ASSIGN:'Buscando tutor',
-  ASSIGNED:          'Tutor asignado',
-  ACCEPTED:          'Programada',
-  FINISHED:          'Finalizada',
-  REJECTED:          'Rechazada',
-  CANCELED:          'Cancelada',
-  CONTINUITY:        'Reasignación',
+  PENDING:            'Buscando tutor',
+  FAILED_AUTO_ASSIGN: 'Buscando tutor',
+  ASSIGNED:           'Tutor asignado',
+  ACCEPTED:           'Programada',
+  FINISHED:           'Finalizada',
+  REJECTED:           'Rechazada',
+  CANCELED:           'Cancelada',
+  CONTINUITY:         'Reasignación',
 };
 const toFrontend: Record<string, string> = Object.fromEntries(
   Object.entries(toBackend).map(([k, v]) => [v, k])
 );
 
-// Convierte solicitud de la API al formato del frontend
 function mapSolicitud(s: any): TutoringRequest {
   return {
     id:                 String(s.id),
@@ -55,13 +58,12 @@ function mapSolicitud(s: any): TutoringRequest {
     rejectionReason:    s.motivo_rechazo ?? undefined,
     cancelReason:       s.motivo_cancelacion ?? undefined,
     continuityReason:   s.motivo_continuidad ?? undefined,
-    attended:           s.asistio ?? undefined,
+    attended:           s.asistio === 1 ? true : s.asistio === 0 ? false : undefined,
     createdAt:          new Date(s.fecha_solicitud).getTime(),
     priority:           s.prioridad === 'Alta' ? 1 : s.prioridad === 'Media' ? 2 : 3,
   };
 }
 
-// Convierte tutor de la API al formato User del frontend
 function mapTutor(t: any): User {
   return {
     id:           String(t.id),
@@ -73,7 +75,7 @@ function mapTutor(t: any): User {
     courses:      t.cursos?.map((c: any) => c.curso) ?? [],
     courseAvailability: t.horarios_curso?.map((h: any) => ({
       courses:   JSON.parse(h.cursos ?? '[]'),
-      days:      JSON.parse(h.dias ?? '[]'),
+      days:      JSON.parse(h.dias   ?? '[]'),
       startTime: h.hora_inicio,
       endTime:   h.hora_fin,
     })) ?? [],
@@ -86,78 +88,95 @@ function mapTutor(t: any): User {
   };
 }
 
+function mapGrupo(g: any): TutoringGroup {
+  return {
+    id:          String(g.id),
+    tutorId:     String(g.tutor_id),
+    name:        g.nombre,
+    course:      g.curso,
+    day:         g.dia,
+    startTime:   g.hora_inicio,
+    endTime:     g.hora_fin,
+    room:        g.sala,
+    maxStudents: g.cupo_maximo,
+    studentIds:  g.studentIds ?? [],
+  };
+}
+
 const TutoringContext = createContext<TutoringContextType | undefined>(undefined);
 
 export function TutoringProvider({ children }: { children: ReactNode }) {
   const [users, setUsers]       = useState<User[]>([]);
   const [requests, setRequests] = useState<TutoringRequest[]>([]);
+  const [groups, setGroups]     = useState<TutoringGroup[]>([]);
 
-  // Carga inicial
   useEffect(() => {
     cargarTutores();
     cargarSolicitudes();
+    cargarGrupos();
   }, []);
 
   const cargarTutores = async () => {
     try {
       const res  = await fetch(`${API}/tutores`);
       const data = await res.json();
-
-      // Verificar que sea un array antes de hacer .map()
-      if (!Array.isArray(data)) {
-        console.error('Error: la API no devolvió un array de tutores', data);
-        return;
-      }
-
-      setUsers((prev) => {
+      if (!Array.isArray(data)) return;
+      setUsers(prev => {
         const noTutores = prev.filter(u => u.role !== 'TUTOR');
         return [...noTutores, ...data.map(mapTutor)];
       });
-    } catch (err) {
-      console.error('Error cargando tutores:', err);
-    }
+    } catch (err) { console.error('Error cargando tutores:', err); }
   };
 
   const cargarSolicitudes = async () => {
     try {
       const res  = await fetch(`${API}/solicitudes`);
       const data = await res.json();
-
-      // Verificar que sea un array antes de hacer .map()
-      if (!Array.isArray(data)) {
-        console.error('Error: la API no devolvió un array de solicitudes', data);
-        return;
-      }
-
+      if (!Array.isArray(data)) return;
       setRequests(data.map(mapSolicitud));
-    } catch (err) {
-      console.error('Error cargando solicitudes:', err);
-    }
+    } catch (err) { console.error('Error cargando solicitudes:', err); }
   };
-  const getTutors = () => users.filter(u => u.role === 'TUTOR');
+
+  const cargarGrupos = async () => {
+    try {
+      const res  = await fetch(`${API}/grupos`);
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+      setGroups(data.map(mapGrupo));
+    } catch (err) { console.error('Error cargando grupos:', err); }
+  };
+
+  const getTutors = () =>
+    users
+      .filter(u => u.role === 'TUTOR')
+      .map(u => ({ ...u, groups: groups.filter(g => g.tutorId === u.id) }));
 
   const createRequest = async (reqData: Omit<TutoringRequest, 'id' | 'status' | 'createdAt' | 'priority'>) => {
     let prioridad = 'Baja';
-    if (reqData.semester <= 2) prioridad = 'Alta';
+    if (reqData.semester <= 2)      prioridad = 'Alta';
     else if (reqData.semester <= 5) prioridad = 'Media';
 
-    await fetch(`${API}/solicitudes`, {
+    const res = await fetch(`${API}/solicitudes`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        nombre_estudiante:      reqData.studentName,
-        semestre:               reqData.semester,
-        carrera:                reqData.career,
-        ramo:                   reqData.subject,
-        tema:                   reqData.description,
+        nombre_estudiante:     reqData.studentName,
+        semestre:              reqData.semester,
+        carrera:               reqData.career,
+        ramo:                  reqData.subject,
+        tema:                  reqData.description,
         prioridad,
-        modalidad:              reqData.modality,
-        dias_preferidos:        JSON.stringify(reqData.preferredDays),
-        hora_inicio_preferida:  reqData.preferredStartTime || null,
-        hora_fin_preferida:     reqData.preferredEndTime || null,
-        student_id:             reqData.studentId,
+        modalidad:             reqData.modality,
+        dias_preferidos:       JSON.stringify(reqData.preferredDays),
+        hora_inicio_preferida: reqData.preferredStartTime || null,
+        hora_fin_preferida:    reqData.preferredEndTime   || null,
+        student_id:            reqData.studentId,
       }),
     });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error ?? 'Error al crear solicitud');
+    }
     await cargarSolicitudes();
   };
 
@@ -179,14 +198,12 @@ export function TutoringProvider({ children }: { children: ReactNode }) {
     await cargarSolicitudes();
   };
 
-  const acceptRequest  = (id: string) => cambiarEstado(id, 'ACCEPTED');
-  const rejectRequest  = (id: string, reason: string) => cambiarEstado(id, 'REJECTED', { motivo: reason });
-  const cancelRequest  = (id: string, reason: string) => cambiarEstado(id, 'CANCELED', { motivo: reason });
-
-  const finishRequest  = async (id: string, continuityReason?: string) => {
-    const estado = continuityReason ? 'CONTINUITY' : 'FINISHED';
-    await cambiarEstado(id, estado, continuityReason ? { motivo: continuityReason } : {});
-  };
+  const acceptRequest = (id: string) => cambiarEstado(id, 'ACCEPTED');
+  const rejectRequest = (id: string, reason: string) => cambiarEstado(id, 'REJECTED', { motivo: reason });
+  const cancelRequest = (id: string, reason: string) => cambiarEstado(id, 'CANCELED', { motivo: reason });
+  const finishRequest = (id: string, continuityReason?: string) =>
+    cambiarEstado(id, continuityReason ? 'CONTINUITY' : 'FINISHED',
+      continuityReason ? { motivo: continuityReason } : {});
 
   const registerAttendance = async (requestId: string, attended: boolean) => {
     await fetch(`${API}/solicitudes/${requestId}/asistencia`, {
@@ -198,42 +215,33 @@ export function TutoringProvider({ children }: { children: ReactNode }) {
   };
 
   const addTutor = async (tutorData: Omit<User, 'id' | 'role' | 'joinedAt'>) => {
-    try {
-      const res = await fetch(`${API}/tutores`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nombre:            tutorData.name,
-          email:             tutorData.email,
-          telefono:          tutorData.phone ?? '',
-          titulo:            '',
-          anos_experiencia:  '',
-          disponibilidad:    'Media',
-          especializaciones: tutorData.specialties ?? [],
-          horarios:          [],
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error ?? 'Error al registrar tutor');
-      }
-
-      await cargarTutores();
-    } catch (err) {
-      console.error('Error en addTutor:', err);
-      throw err; // lo relanza para que el componente pueda mostrar el error
+    const res = await fetch(`${API}/tutores`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nombre:            tutorData.name,
+        email:             tutorData.email,
+        telefono:          tutorData.phone ?? '',
+        titulo:            '',
+        anos_experiencia:  '',
+        disponibilidad:    'Media',
+        especializaciones: tutorData.specialties ?? [],
+        horarios:          [],
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error ?? 'Error al registrar tutor');
     }
+    await cargarTutores();
   };
 
-  const updateTutor = async (tutorId: string, specialties: string[], courses: string[], availability: { days: string[]; startTime: string; endTime: string }[]) => {
-    // Actualizar especializaciones
+  const updateTutor = async (tutorId: string, specialties: string[], courses: string[], _availability: any[]) => {
     await fetch(`${API}/tutores/${tutorId}`, {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ especializaciones: specialties }),
     });
-    // Actualizar cursos
     await fetch(`${API}/tutores/${tutorId}/cursos`, {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -254,14 +262,53 @@ export function TutoringProvider({ children }: { children: ReactNode }) {
   const adminUpdateStatus = (requestId: string, status: TutoringRequest['status']) =>
     cambiarEstado(requestId, status);
 
+  // ── Grupos ──────────────────────────────────────────────────
+  const createGroup = async (groupData: Omit<TutoringGroup, 'id'>) => {
+    await fetch(`${API}/grupos`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tutor_id:    Number(groupData.tutorId),
+        nombre:      groupData.name,
+        curso:       groupData.course,
+        dia:         groupData.day,
+        hora_inicio: groupData.startTime,
+        hora_fin:    groupData.endTime,
+        sala:        groupData.room,
+        cupo_maximo: groupData.maxStudents,
+      }),
+    });
+    await cargarGrupos();
+  };
+
+  const deleteGroup = async (groupId: string) => {
+    await fetch(`${API}/grupos/${groupId}`, { method: 'DELETE' });
+    await cargarGrupos();
+  };
+
+  const addStudentToGroup = async (groupId: string, studentIds: string[]) => {
+    await fetch(`${API}/grupos/${groupId}/estudiantes`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ studentIds }),
+    });
+    await cargarGrupos();
+  };
+
+  const removeStudentFromGroup = async (groupId: string, studentId: string) => {
+    await fetch(`${API}/grupos/${groupId}/estudiantes/${studentId}`, { method: 'DELETE' });
+    await cargarGrupos();
+  };
+
   return (
     <TutoringContext.Provider value={{
-      users, requests,
+      users, requests, groups,
       createRequest, assignTutor,
       acceptRequest, rejectRequest, cancelRequest,
       finishRequest, registerAttendance,
       getTutors, addTutor, updateTutor, updateCourseAvailability,
       adminUpdateStatus,
+      createGroup, deleteGroup, addStudentToGroup, removeStudentFromGroup,
     }}>
       {children}
     </TutoringContext.Provider>

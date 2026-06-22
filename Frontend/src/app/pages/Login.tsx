@@ -1,10 +1,11 @@
 import { useState, FormEvent } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, Link } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 
 export function Login() {
-  const [email, setEmail]     = useState('');
-  const [error, setError]     = useState('');
+  const [email, setEmail]       = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError]       = useState('');
   const [cargando, setCargando] = useState(false);
   const { login } = useAuth();
   const navigate  = useNavigate();
@@ -13,23 +14,23 @@ export function Login() {
     e.preventDefault();
     setError('');
 
-    if (!email) {
-      setError('Por favor, ingresa un correo.');
+    if (!email || !password) {
+      setError('Completa correo y contraseña.');
       return;
     }
 
     setCargando(true);
-    const success = await login(email);
+    const result = await login(email, password);
     setCargando(false);
 
-    if (success) {
-      const saved = localStorage.getItem('tutoring_user');
+    if (result.ok) {
+      const saved = localStorage.getItem('auth_user');
       const user  = saved ? JSON.parse(saved) : null;
-      if (user?.role === 'ESTUDIANTE')  navigate('/student/dashboard');
-      else if (user?.role === 'TUTOR')  navigate('/tutor/dashboard');
-      else if (user?.role === 'ENCARGADO') navigate('/admin/dashboard');
+      if (user?.rol === 'ESTUDIANTE')     navigate('/student/dashboard');
+      else if (user?.rol === 'TUTOR')     navigate('/tutor/dashboard');
+      else if (user?.rol === 'ENCARGADO') navigate('/admin/dashboard');
     } else {
-      setError('Correo no encontrado. Verifica que estés registrado.');
+      setError(result.error ?? 'Error al iniciar sesión');
     }
   };
 
@@ -37,7 +38,7 @@ export function Login() {
     <div className="max-w-md mx-auto mt-20 bg-white p-8 rounded-xl shadow-sm border border-gray-100">
       <div className="text-center mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Iniciar Sesión</h1>
-        <p className="text-sm text-gray-500 mt-2">Ingresa con tu correo universitario</p>
+        <p className="text-sm text-gray-500 mt-2">Ingresa con tu cuenta</p>
       </div>
 
       <form onSubmit={handleLogin} className="space-y-6">
@@ -54,6 +55,19 @@ export function Login() {
           />
         </div>
 
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Contraseña
+          </label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+            placeholder="••••••••"
+          />
+        </div>
+
         {error && <p className="text-red-500 text-sm">{error}</p>}
 
         <button
@@ -61,18 +75,16 @@ export function Login() {
           disabled={cargando}
           className="w-full bg-indigo-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
         >
-          {cargando ? 'Verificando...' : 'Entrar'}
+          {cargando ? 'Ingresando...' : 'Entrar'}
         </button>
       </form>
 
-      <div className="mt-8 pt-6 border-t border-gray-100">
-        <p className="text-sm text-gray-500 mb-3 font-medium">Correos de prueba:</p>
-        <ul className="text-xs space-y-2 text-gray-600">
-          <li><strong>Estudiante:</strong> ana@uni.edu</li>
-          <li><strong>Tutor:</strong> usa el email con que registraste un tutor</li>
-          <li><strong>Encargado:</strong> admin@uni.edu</li>
-        </ul>
-      </div>
+      <p className="text-center text-sm text-gray-500 mt-6">
+        ¿No tienes cuenta?{' '}
+        <Link to="/register" className="text-indigo-600 font-medium hover:underline">
+          Regístrate aquí
+        </Link>
+      </p>
     </div>
   );
 }

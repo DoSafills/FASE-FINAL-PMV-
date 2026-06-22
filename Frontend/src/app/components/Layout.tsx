@@ -8,19 +8,20 @@ export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const PUBLIC_PATHS = ['/login', '/register'];
+
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
-  // If not logged in and trying to access a protected route
   useEffect(() => {
-    if (!user && location.pathname !== '/login') {
+    if (!user && !PUBLIC_PATHS.includes(location.pathname)) {
       navigate('/login');
     }
   }, [user, location.pathname, navigate]);
 
-  if (!user && location.pathname !== '/login') {
+  if (!user && !PUBLIC_PATHS.includes(location.pathname)) {
     return null;
   }
 
@@ -31,14 +32,14 @@ export function Layout() {
           <BookOpen className="w-6 h-6" />
           <span className="font-semibold text-lg tracking-tight">TutoSync</span>
         </div>
-        
+
         {user && (
           <div className="flex items-center gap-6">
             <div className="flex flex-col text-right">
-              <span className="text-sm font-medium text-gray-900">{user.name}</span>
-              <span className="text-xs text-gray-500">{user.role}</span>
+              <span className="text-sm font-medium text-gray-900">{user.nombre}</span>
+              <span className="text-xs text-gray-500">{user.rol}</span>
             </div>
-            <button 
+            <button
               onClick={handleLogout}
               className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
               title="Cerrar sesión"
